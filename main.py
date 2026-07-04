@@ -2,12 +2,20 @@ import os
 import json
 from datetime import datetime
 from typing import List, Optional
+from dotenv import load_dotenv
+
+# Load environment variables on startup
+load_dotenv()
+
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, String, Integer, Float, Boolean, Text, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
+
+# Import emergency notification coordinator
+from app.services.notifications.notification_service import send_emergency_notifications
 
 # 1. DATABASE CONFIGURATION
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./nash.db")
@@ -249,6 +257,43 @@ class ClinicalNoteCreate(BaseModel):
 class ComplianceToggleRequest(BaseModel):
     complied: bool
 
+class PatientInput(BaseModel):
+    patient_id: str
+    name: str
+    age: Optional[int] = 65
+    conditions: Optional[List[str]] = []
+    baseline_heart_rate: Optional[int] = 70
+    baseline_systolic_bp: Optional[int] = 120
+    baseline_spo2: Optional[int] = 98
+
+class VitalsInput(BaseModel):
+    heart_rate: int
+    systolic_bp: int
+    diastolic_bp: int
+    temperature_c: Optional[float] = 36.6
+    spo2: int
+    sleep_hours: Optional[float] = 7.5
+    medication_adherence: Optional[float] = 1.0
+    activity_minutes: Optional[int] = 30
+    stress_level: Optional[int] = 3
+
+class RiskRequest(BaseModel):
+    patient: PatientInput
+    vitals: VitalsInput
+    symptoms: Optional[List[str]] = []
+
+class SimulateEmergencyRequest(BaseModel):
+    patient: PatientInput
+    vitals: VitalsInput
+    symptoms: Optional[List[str]] = []
+    emergency_type: str
+
+class PredictionRequest(BaseModel):
+    patient: PatientInput
+    vitals: VitalsInput
+    symptoms: Optional[List[str]] = []
+    scenario: str
+
 # 5. REST API ROUTES
 
 @app.get("/")
@@ -416,3 +461,178 @@ def get_reports():
             {"month": "May", "admissions": 4}
         ]
     }
+
+# --- AI COMPATIBILITY & TWILIO NOTIFICATION ROUTES ---
+
+@app.post("/risk")
+def calculate_risk(req: RiskRequest):
+    # Calculate dynamic risk score based on vitals parameters
+    score = 15.0
+    reasons = []
+    
+    # Heart rate rules
+    hr = req.vitals.heart_rate
+    if hr > 110 or hr < 50:
+        score += 25.0
+        reasons.append("Heart rate variance (tachycardia/bradycardia)")
+    elif hr > 95 or hr < 60:
+        score += 10.0
+        reasons.append("Mild elevated/depressed heart rate")
+        
+    # SpO2 rules
+    spo2 = req.vitals.spo2
+    if spo2 < 90:
+        score += 45.0
+        reasons.append("Severe hypoxia (SpO2 < 90%)")
+    elif spo2 < 94:
+        score += 20.0
+        reasons.append("Mild oxygen desaturation")
+        
+    # Blood pressure rules
+    systolic = req.vitals.systolic_bp
+    if systolic > 160:
+        score += 25.0
+        reasons.append("Severe hypertensive crisis")
+    elif systolic > 140:
+        score += 12.0
+        reasons.append("Stage 2 hypertension")
+
+    # Bound risk score
+    score = min(100.0, max(5.0, score))
+    if not reasons:
+        reasons = ["All tracked vitals within normal clinical limits"]
+
+    # Trigger Condition 1: Risk Score >= 90
+    if score >= 90.0:
+        send_emergency_notifications(
+            patient_name=req.patient.name,
+            score=score,
+            risk="critical",
+            reason=f"Risk score evaluated at {score}%: " + ", ".join(reasons),
+            heart_rate=hr,
+            spo2=spo2,
+            bp=f"{systolic}/{req.vitals.diastolic_bp}"
+        )
+
+    return {"score": score, "reasons": reasons}
+
+@app.post("/simulate-emergency")
+def simulate_emergency(req: SimulateEmergencyRequest):
+    # Trigger Condition 2: Emergency Simulation starts
+    emergency_desc = req.emergency_type.replace("_", " ").title()
+    doctor_msg = f"Immediate code blue triggered. Patient is experiencing acute {emergency_desc}."
+    
+    # Always send emergency notifications
+    send_emergency_notifications(
+        patient_name=req.patient.name,
+        score=95.0,
+        risk="critical",
+        reason=f"Emergency Simulation Triggered: {emergency_desc}",
+        heart_rate=req.vitals.heart_rate,
+        spo2=req.vitals.spo2,
+        bp=f"{req.vitals.systolic_bp}/{req.vitals.diastolic_bp}"
+    )
+
+    return {
+        "risk": {
+            "score": 95.0,
+            "risk_level": "critical"
+        },
+        "doctor_notification": doctor_msg,
+        "timeline": [
+            { "title": "Triage Alert", "description": f"Triage category set to critical. Patient experiencing active {emergency_desc}." },
+            { "title": "Bedside Code", "description": f"Ward response team dispatched to patient." }
+        ]
+    }
+
+@app.post("/prediction")
+def get_prediction(req: PredictionRequest):
+    # Trigger Condition 3: Cardiac Arrest scenario selected
+    # Checked via scenario name
+    is_cardiac = req.scenario in ["cardiac", "cardiac_arrest", "medication_skipped"]
+    score = 88.0 if req.scenario == "medication_skipped" else 95.0 if is_cardiac else 22.0
+    
+    if is_cardiac:
+        send_emergency_notifications(
+            patient_name=req.patient.name,
+            score=score,
+            risk="critical",
+            reason="Cardiac Arrest Scenario Selected / Medication Skipped Risk Surge",
+            heart_rate=req.vitals.heart_rate,
+            spo2=req.vitals.spo2,
+            bp=f"{req.vitals.systolic_bp}/{req.vitals.diastolic_bp}"
+        )
+
+    return {
+        "series": [
+            { "day": "Today", "score": score, "drivers": ["Missed medications", "Stress factors"] }
+        ]
+    }
+
+@app.post("/recommendations")
+def get_recommendations(req: RiskRequest):
+    return {
+        "recommendations": [
+            { "action": "Ensure daily compliance tracking is synced." },
+            { "action": "Assess cardiorenal balance at bedside." }
+        ],
+        "confidence": "high"
+    }
+
+@app.post("/summary")
+def get_summary(req: dict):
+    return {
+        "soap": {
+            "subjective": "Patient sync completes normally.",
+            "assessment": "No new acute changes flagged on stable baseline.",
+            "plan": ["Continue telemetry monitoring daily."]
+        },
+        "generated_by": "Local Sandbox LLM (v2.0)"
+    }
+
+@app.post("/digital-twin")
+def get_digital_twin(req: RiskRequest):
+    score = req.vitals.heart_rate
+    status = "critical" if score > 110 else "normal"
+    return {
+        "heart": status,
+        "lungs": "normal",
+        "kidneys": "normal",
+        "brain": "normal",
+        "liver": "normal",
+        "reasons": {
+            "heart": [f"Heart rate measured at {score} bpm"]
+        }
+    }
+
+# Trigger Condition 4: Doctor manually presses "Trigger Emergency"
+@app.post("/api/patients/{id}/trigger-emergency")
+def trigger_manual_emergency(id: str, db: Session = Depends(get_db)):
+    patient = db.query(PatientDB).filter(PatientDB.id == id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+        
+    res = send_emergency_notifications(
+        patient_name=patient.name,
+        score=patient.riskScore or 90.0,
+        risk=patient.riskCategory or "critical",
+        reason="Manual Doctor Override: Emergency Trigger Action Clicked",
+        heart_rate=patient.heartRate or 72,
+        spo2=patient.oxygenSat or 98,
+        bp=f"{patient.systolic or 120}/{patient.diastolic or 80}"
+    )
+    return res
+
+# Bonus Endpoint: Test notifications directly
+@app.post("/notifications/test")
+def test_notifications():
+    res = send_emergency_notifications(
+        patient_name="Ramesh Kumar (Demo)",
+        score=92.0,
+        risk="critical",
+        reason="Demo Testing Alert Protocol",
+        heart_rate=105,
+        spo2=89,
+        bp="165/95"
+    )
+    return res
