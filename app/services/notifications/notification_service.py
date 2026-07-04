@@ -19,7 +19,8 @@ def send_emergency_notifications(
     reason: str, 
     heart_rate: int, 
     spo2: int, 
-    bp: str
+    bp: str,
+    custom_phone: str = None
 ) -> dict:
     """
     Formulates and sends real-time emergency alert SMS and WhatsApp notifications
@@ -63,6 +64,8 @@ def send_emergency_notifications(
         "caregiver": CAREGIVER_PHONE,
         "emergency_contact": EMERGENCY_PHONE
     }
+    if custom_phone:
+        recipients["custom_phone"] = custom_phone
     
     results = {
         "sms": {},

@@ -623,9 +623,13 @@ def trigger_manual_emergency(id: str, db: Session = Depends(get_db)):
     )
     return res
 
+class TestNotificationRequest(BaseModel):
+    phone: Optional[str] = None
+
 # Bonus Endpoint: Test notifications directly
 @app.post("/notifications/test")
-def test_notifications():
+def test_notifications(req: Optional[TestNotificationRequest] = None):
+    target_phone = req.phone if req else None
     res = send_emergency_notifications(
         patient_name="Ramesh Kumar (Demo)",
         score=92.0,
@@ -633,6 +637,7 @@ def test_notifications():
         reason="Demo Testing Alert Protocol",
         heart_rate=105,
         spo2=89,
-        bp="165/95"
+        bp="165/95",
+        custom_phone=target_phone
     )
     return res
