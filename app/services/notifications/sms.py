@@ -26,6 +26,10 @@ def send_sms(to_number: str, body_text: str) -> dict:
         logger.warning(f"Dummy or invalid recipient phone number ({to_number}). Skipping SMS.")
         return {"status": "skipped", "reason": "Dummy recipient number"}
 
+    if not TWILIO_PHONE_NUMBER:
+        logger.warning("TWILIO_PHONE_NUMBER is not configured. Skipping SMS dispatch.")
+        return {"status": "skipped", "reason": "Missing sender phone number"}
+
     client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
     
     for attempt in range(2):
